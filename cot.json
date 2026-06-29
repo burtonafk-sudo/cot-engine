@@ -1,0 +1,17 @@
+{
+  "ES": {
+    "commercial_long": 120000,
+    "commercial_short": 90000,
+    "commercial_net": 30000
+  },
+  "CL": {
+    "commercial_long": 200000,
+    "commercial_short": 210000,
+    "commercial_net": -10000
+  },
+  "DX": {
+    "commercial_long": 40000,
+    "commercial_short": 35000,
+    "commercial_net": 5000
+  }
+}
