@@ -1,0 +1,41 @@
+name: COT Auto
+
+on:
+  schedule:
+    - cron: "0 18 * * 5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install requests pandas
+
+      - name: Run COT pipeline
+        run: python cot_pipeline.py
+
+      - name: Commit cot.json
+        run: |
+          git config user.name "cot-bot"
+          git config user.email "bot@github.com"
+
+          git add cot.json
+
+          git commit -m "update cot" || echo "no changes"
+
+          git push
