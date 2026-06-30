@@ -7,16 +7,17 @@ OUTPUT_FILE = "cot.json"
 URL = "https://publicreporting.cftc.gov/resource/6dca-aqww.json"
 
 # =========================
-# CONFIG – robustné matching namiesto exact stringov
+# SYMBOL MAPPING (robust keyword matching)
 # =========================
 SYMBOL_MAP = {
-    "ES": ["S&P", "E-MINI", "SP 500"],
+    "ES": ["S&P", "E-MINI", "SP 500", "E-MINI S&P"],
     "CL": ["CRUDE OIL", "LIGHT SWEET", "NYMEX"],
-    "DX": ["DOLLAR INDEX", "U.S. DOLLAR"]
+    "DX": ["DOLLAR INDEX", "U.S. DOLLAR", "ICE DOLLAR"]
 }
 
+
 # =========================
-# FETCH DATA
+# FETCH DATA SAFELY
 # =========================
 def fetch_data():
     print("Fetching CFTC data...")
@@ -28,6 +29,9 @@ def fetch_data():
 
     data = r.json()
 
+    if not data:
+        raise Exception("CFTC returned empty dataset")
+
     df = pd.DataFrame(data)
 
     print("Rows received:", len(df))
@@ -37,29 +41,31 @@ def fetch_data():
 
 
 # =========================
-# FIND BEST MATCH ROW
+# FIND MATCH SAFE
 # =========================
 def find_latest_match(df, keywords):
-    if "contract_market_name" not in df.columns:
-        raise Exception("Missing column: contract_market_name")
 
-    mask = df["contract_market_name"].str.upper()
+    if df.empty:
+        return None
+
+    if "contract_market_name" not in df.columns:
+        raise Exception(f"Missing column contract_market_name. Columns: {df.columns}")
+
+    mask = pd.Series([False] * len(df))
 
     for kw in keywords:
-        mask = mask.str.contains(kw.upper(), na=False) | mask
+        mask = mask | df["contract_market_name"].str.contains(kw, case=False, na=False)
 
     filtered = df[mask]
 
-    print(f"Matches found: {len(filtered)} for keywords {keywords}")
+    print(f"Matches found: {len(filtered)} for {keywords}")
 
     if filtered.empty:
         return None
 
-    # sort by date if exists
-    date_col = "report_date_as_yyyy_mm_dd"
-
-    if date_col in filtered.columns:
-        filtered = filtered.sort_values(date_col)
+    # sort by date if available
+    if "report_date_as_yyyy_mm_dd" in filtered.columns:
+        filtered = filtered.sort_values("report_date_as_yyyy_mm_dd")
 
     return filtered.iloc[-1]
 
@@ -68,6 +74,7 @@ def find_latest_match(df, keywords):
 # BUILD COT STRUCTURE
 # =========================
 def build_cot(df):
+
     result = {}
 
     for symbol, keywords in SYMBOL_MAP.items():
@@ -77,15 +84,16 @@ def build_cot(df):
         row = find_latest_match(df, keywords)
 
         if row is None:
-            print(f"WARNING: No data for {symbol}")
+            print(f"WARNING: No match for {symbol}")
+
             result[symbol] = {
-                "error": "no match found"
+                "error": "no data found"
             }
             continue
 
         try:
-            long = float(row.get("commercial_long_all", 0))
-            short = float(row.get("commercial_short_all", 0))
+            long = float(row.get("commercial_long_all", 0) or 0)
+            short = float(row.get("commercial_short_all", 0) or 0)
 
             net = long - short
 
@@ -98,7 +106,7 @@ def build_cot(df):
             print(f"{symbol} OK → Net: {net}")
 
         except Exception as e:
-            print(f"ERROR parsing {symbol}: {e}")
+            print(f"ERROR processing {symbol}: {str(e)}")
 
             result[symbol] = {
                 "error": str(e)
@@ -111,10 +119,11 @@ def build_cot(df):
 # SAVE OUTPUT
 # =========================
 def save_json(data):
+
     with open(OUTPUT_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-    print("\nSaved cot.json successfully")
+    print("\nSaved cot.json")
 
 
 # =========================
@@ -129,6 +138,9 @@ if __name__ == "__main__":
 
         save_json(cot)
 
+        print("\nSUCCESS: Pipeline completed")
+
     except Exception as e:
-        print("FATAL ERROR:", e)
+        print("\nFATAL ERROR:")
+        print(str(e))
         raise
