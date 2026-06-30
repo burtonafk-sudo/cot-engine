@@ -7,17 +7,17 @@ OUTPUT_FILE = "cot.json"
 URL = "https://publicreporting.cftc.gov/resource/6dca-aqww.json"
 
 # =========================
-# SYMBOL MAPPING (robust keyword matching)
+# REALISTIC CFTC KEYWORDS (broader matching)
 # =========================
 SYMBOL_MAP = {
-    "ES": ["S&P", "E-MINI", "SP 500", "E-MINI S&P"],
-    "CL": ["CRUDE OIL", "LIGHT SWEET", "NYMEX"],
-    "DX": ["DOLLAR INDEX", "U.S. DOLLAR", "ICE DOLLAR"]
+    "ES": ["S&P 500", "E-MINI S&P", "E-MINI S&P 500", "SP500"],
+    "CL": ["CRUDE OIL", "LIGHT SWEET CRUDE", "WTI"],
+    "DX": ["DOLLAR INDEX", "USD INDEX", "U.S. DOLLAR INDEX"]
 }
 
 
 # =========================
-# FETCH DATA SAFELY
+# FETCH
 # =========================
 def fetch_data():
     print("Fetching CFTC data...")
@@ -30,48 +30,64 @@ def fetch_data():
     data = r.json()
 
     if not data:
-        raise Exception("CFTC returned empty dataset")
+        raise Exception("Empty CFTC response")
 
     df = pd.DataFrame(data)
 
-    print("Rows received:", len(df))
-    print("Columns:", list(df.columns))
+    print("Rows:", len(df))
+    print("Columns:", df.columns.tolist())
 
     return df
 
 
 # =========================
-# FIND MATCH SAFE
+# MATCH ENGINE (FIXED)
 # =========================
 def find_latest_match(df, keywords):
 
     if df.empty:
         return None
 
-    if "contract_market_name" not in df.columns:
-        raise Exception(f"Missing column contract_market_name. Columns: {df.columns}")
+    # safe column detection
+    name_col = None
+
+    for c in df.columns:
+        if "contract" in c.lower() and "name" in c.lower():
+            name_col = c
+            break
+
+    if name_col is None:
+        print("Available columns:", df.columns.tolist())
+        raise Exception("No contract name column found")
 
     mask = pd.Series([False] * len(df))
 
     for kw in keywords:
-        mask = mask | df["contract_market_name"].str.contains(kw, case=False, na=False)
+        mask = mask | df[name_col].str.contains(kw, case=False, na=False)
 
     filtered = df[mask]
 
-    print(f"Matches found: {len(filtered)} for {keywords}")
+    print(f"Matches: {len(filtered)} for {keywords}")
 
     if filtered.empty:
         return None
 
-    # sort by date if available
-    if "report_date_as_yyyy_mm_dd" in filtered.columns:
-        filtered = filtered.sort_values("report_date_as_yyyy_mm_dd")
+    # find date column safely
+    date_col = None
+
+    for c in df.columns:
+        if "date" in c.lower():
+            date_col = c
+            break
+
+    if date_col:
+        filtered = filtered.sort_values(date_col)
 
     return filtered.iloc[-1]
 
 
 # =========================
-# BUILD COT STRUCTURE
+# BUILD COT
 # =========================
 def build_cot(df):
 
@@ -84,16 +100,24 @@ def build_cot(df):
         row = find_latest_match(df, keywords)
 
         if row is None:
-            print(f"WARNING: No match for {symbol}")
+            print(f"NO MATCH: {symbol}")
 
             result[symbol] = {
-                "error": "no data found"
+                "error": "no match found"
             }
             continue
 
         try:
-            long = float(row.get("commercial_long_all", 0) or 0)
-            short = float(row.get("commercial_short_all", 0) or 0)
+            # dynamic column fallback (CFTC changes often)
+            long = 0
+            short = 0
+
+            for c in df.columns:
+                if "long" in c.lower() and "comm" in c.lower():
+                    long = float(row.get(c, 0) or 0)
+
+                if "short" in c.lower() and "comm" in c.lower():
+                    short = float(row.get(c, 0) or 0)
 
             net = long - short
 
@@ -103,10 +127,10 @@ def build_cot(df):
                 "commercial_net": net
             }
 
-            print(f"{symbol} OK → Net: {net}")
+            print(f"{symbol} → NET {net}")
 
         except Exception as e:
-            print(f"ERROR processing {symbol}: {str(e)}")
+            print(f"ERROR {symbol}: {e}")
 
             result[symbol] = {
                 "error": str(e)
@@ -116,7 +140,7 @@ def build_cot(df):
 
 
 # =========================
-# SAVE OUTPUT
+# SAVE
 # =========================
 def save_json(data):
 
@@ -127,7 +151,7 @@ def save_json(data):
 
 
 # =========================
-# MAIN
+# RUN
 # =========================
 if __name__ == "__main__":
 
@@ -138,9 +162,8 @@ if __name__ == "__main__":
 
         save_json(cot)
 
-        print("\nSUCCESS: Pipeline completed")
+        print("\nSUCCESS")
 
     except Exception as e:
-        print("\nFATAL ERROR:")
-        print(str(e))
+        print("\nFATAL ERROR:", e)
         raise
