@@ -1,59 +1,57 @@
-import json
 import requests
+import pandas as pd
+import json
 
-# =========================
-# CONFIG (môžeš upraviť)
-# =========================
 OUTPUT_FILE = "cot.json"
 
-# =========================
-# SAMPLE STRUCTURE (ES, CL, DX)
-# neskôr sem napojíš CFTC parsing
-# =========================
-data = {
-    "ES": {
-        "commercial_long": 0,
-        "commercial_short": 0,
-        "commercial_net": 0
-    },
-    "CL": {
-        "commercial_long": 0,
-        "commercial_short": 0,
-        "commercial_net": 0
-    },
-    "DX": {
-        "commercial_long": 0,
-        "commercial_short": 0,
-        "commercial_net": 0
-    }
+# CFTC Legacy dataset (Socrata API endpoint)
+URL = "https://publicreporting.cftc.gov/resource/6dca-aqww.json"
+
+# mapping futures → CFTC commodity names (musíš doladiť podľa datasetu)
+SYMBOL_MAP = {
+    "ES": "E-MINI S&P 500 STOCK INDEX - CME",
+    "CL": "CRUDE OIL, LIGHT SWEET - NYMEX",
+    "DX": "U.S. DOLLAR INDEX - ICE"
 }
 
-# =========================
-# PLACEHOLDER FOR CFTC LOGIC
-# sem budeš neskôr napájať API / CSV parsing
-# =========================
-def fetch_and_update():
-    # TODO: sem vložíš reálne CFTC parsing
-    # teraz len test data aby pipeline fungovala
-    data["ES"]["commercial_long"] = 120000
-    data["ES"]["commercial_short"] = 90000
-    data["ES"]["commercial_net"] = 30000
+def fetch_data():
+    r = requests.get(URL)
+    data = r.json()
+    return pd.DataFrame(data)
 
-    data["CL"]["commercial_long"] = 200000
-    data["CL"]["commercial_short"] = 210000
-    data["CL"]["commercial_net"] = -10000
+def get_latest(df, name):
+    sub = df[df["contract_market_name"] == name]
+    sub = sub.sort_values("report_date_as_yyyy_mm_dd")
+    return sub.iloc[-1]
 
-    data["DX"]["commercial_long"] = 40000
-    data["DX"]["commercial_short"] = 35000
-    data["DX"]["commercial_net"] = 5000
+def build_cot(df):
+    out = {}
 
+    for symbol, name in SYMBOL_MAP.items():
+        try:
+            row = get_latest(df, name)
 
-def save_json():
-    with open(OUTPUT_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+            commercial_long = int(row["commercial_long_all"])
+            commercial_short = int(row["commercial_short_all"])
 
+            out[symbol] = {
+                "commercial_long": commercial_long,
+                "commercial_short": commercial_short,
+                "commercial_net": commercial_long - commercial_short
+            }
+
+        except Exception as e:
+            out[symbol] = {
+                "error": str(e)
+            }
+
+    return out
 
 if __name__ == "__main__":
-    fetch_and_update()
-    save_json()
-    print("cot.json generated successfully")
+    df = fetch_data()
+    cot = build_cot(df)
+
+    with open(OUTPUT_FILE, "w") as f:
+        json.dump(cot, f, indent=2)
+
+    print("COT updated (real data)")
