@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repo
         uses: actions/checkout@v4
 
       - name: Setup Python
@@ -23,18 +23,18 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install deps
+      - name: Install dependencies
         run: pip install pandas requests
 
-      - name: Run pipeline
-        run: python cot_pipeline.py
+      - name: Run COT pipeline (DEBUG)
+        run: python -u cot_pipeline.py
 
       - name: Prepare Pages folder
         run: |
           mkdir public
           cp cot.json public/cot.json
 
-      - name: Upload artifact
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: public
