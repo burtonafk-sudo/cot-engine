@@ -4,54 +4,131 @@ import json
 
 OUTPUT_FILE = "cot.json"
 
-# CFTC Legacy dataset (Socrata API endpoint)
 URL = "https://publicreporting.cftc.gov/resource/6dca-aqww.json"
 
-# mapping futures → CFTC commodity names (musíš doladiť podľa datasetu)
+# =========================
+# CONFIG – robustné matching namiesto exact stringov
+# =========================
 SYMBOL_MAP = {
-    "ES": "E-MINI S&P 500 STOCK INDEX - CME",
-    "CL": "CRUDE OIL, LIGHT SWEET - NYMEX",
-    "DX": "U.S. DOLLAR INDEX - ICE"
+    "ES": ["S&P", "E-MINI", "SP 500"],
+    "CL": ["CRUDE OIL", "LIGHT SWEET", "NYMEX"],
+    "DX": ["DOLLAR INDEX", "U.S. DOLLAR"]
 }
 
+# =========================
+# FETCH DATA
+# =========================
 def fetch_data():
-    r = requests.get(URL)
+    print("Fetching CFTC data...")
+
+    r = requests.get(URL, timeout=30)
+
+    if r.status_code != 200:
+        raise Exception(f"CFTC API error: {r.status_code}")
+
     data = r.json()
-    return pd.DataFrame(data)
 
-def get_latest(df, name):
-    sub = df[df["contract_market_name"] == name]
-    sub = sub.sort_values("report_date_as_yyyy_mm_dd")
-    return sub.iloc[-1]
+    df = pd.DataFrame(data)
 
+    print("Rows received:", len(df))
+    print("Columns:", list(df.columns))
+
+    return df
+
+
+# =========================
+# FIND BEST MATCH ROW
+# =========================
+def find_latest_match(df, keywords):
+    if "contract_market_name" not in df.columns:
+        raise Exception("Missing column: contract_market_name")
+
+    mask = df["contract_market_name"].str.upper()
+
+    for kw in keywords:
+        mask = mask.str.contains(kw.upper(), na=False) | mask
+
+    filtered = df[mask]
+
+    print(f"Matches found: {len(filtered)} for keywords {keywords}")
+
+    if filtered.empty:
+        return None
+
+    # sort by date if exists
+    date_col = "report_date_as_yyyy_mm_dd"
+
+    if date_col in filtered.columns:
+        filtered = filtered.sort_values(date_col)
+
+    return filtered.iloc[-1]
+
+
+# =========================
+# BUILD COT STRUCTURE
+# =========================
 def build_cot(df):
-    out = {}
+    result = {}
 
-    for symbol, name in SYMBOL_MAP.items():
+    for symbol, keywords in SYMBOL_MAP.items():
+
+        print(f"\nProcessing {symbol}...")
+
+        row = find_latest_match(df, keywords)
+
+        if row is None:
+            print(f"WARNING: No data for {symbol}")
+            result[symbol] = {
+                "error": "no match found"
+            }
+            continue
+
         try:
-            row = get_latest(df, name)
+            long = float(row.get("commercial_long_all", 0))
+            short = float(row.get("commercial_short_all", 0))
 
-            commercial_long = int(row["commercial_long_all"])
-            commercial_short = int(row["commercial_short_all"])
+            net = long - short
 
-            out[symbol] = {
-                "commercial_long": commercial_long,
-                "commercial_short": commercial_short,
-                "commercial_net": commercial_long - commercial_short
+            result[symbol] = {
+                "commercial_long": long,
+                "commercial_short": short,
+                "commercial_net": net
             }
 
+            print(f"{symbol} OK → Net: {net}")
+
         except Exception as e:
-            out[symbol] = {
+            print(f"ERROR parsing {symbol}: {e}")
+
+            result[symbol] = {
                 "error": str(e)
             }
 
-    return out
+    return result
 
-if __name__ == "__main__":
-    df = fetch_data()
-    cot = build_cot(df)
 
+# =========================
+# SAVE OUTPUT
+# =========================
+def save_json(data):
     with open(OUTPUT_FILE, "w") as f:
-        json.dump(cot, f, indent=2)
+        json.dump(data, f, indent=2)
 
-    print("COT updated (real data)")
+    print("\nSaved cot.json successfully")
+
+
+# =========================
+# MAIN
+# =========================
+if __name__ == "__main__":
+
+    try:
+        df = fetch_data()
+
+        cot = build_cot(df)
+
+        save_json(cot)
+
+    except Exception as e:
+        print("FATAL ERROR:", e)
+        raise
